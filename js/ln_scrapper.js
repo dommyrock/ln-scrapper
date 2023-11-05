@@ -19,7 +19,7 @@ import fs from "fs";
     console.log("Scrolling again");
     // Scroll and check for button
     await page.evaluate(async () => {
-      const maxScrollTime = 8000; //ms
+      const maxScrollTime = 8000; //Optimal time to wait between button renders / scrolling
       const startTime = Date.now();
       const distance = 100;
 

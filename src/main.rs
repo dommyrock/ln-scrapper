@@ -6,9 +6,6 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
 use tokio::time::{sleep, Duration};
 
-//TODO : Analyze code to check if semaphores worka as intended
-//Right now it seems like we have big pause between initial 4 tasks in semaphore
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Create a semaphore maximum of 4 concurrent tasks
@@ -73,32 +70,3 @@ async fn handle_task_results(mut tasks: JoinSet<Result<(), JoinError>>) {
         }
     }
 }
-
-//v2 simple solution
-
-// use tokio::sync::Semaphore;
-// use std::sync::Arc;
-
-// #[tokio::main]
-// async fn main() {
-//     let semaphore = Arc::new(Semaphore::new(4));  // max 4 tasks
-
-//     let mut handles = vec![];
-
-//     for i in 0..10 {  // assuming we have 10 tasks
-//         let permit = semaphore.clone().acquire_owned().await.unwrap();
-//         let handle = tokio::spawn(async move {
-//             println!("Task {} started", i);
-//             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;  // simulate task work
-//             println!("Task {} ended", i);
-//             drop(permit);
-//         });
-
-//         handles.push(handle);
-//     }
-
-//     // Wait for all tasks to complete
-//     for handle in handles {
-//         handle.await.unwrap();
-//     }
-// }

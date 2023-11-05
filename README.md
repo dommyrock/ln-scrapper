@@ -61,3 +61,21 @@ Example HTML for each scraped job
 
 ### Async rust issues
 ![Initial commit Rust code semaphore problem](problems_rust_code.png) 
+
+
+
+### Running tests 
+
+> Cargo.toml has registration bellow which marks tests path
+```
+[[tests]]
+path = "tests"
+```
+
+All you  need to do is 
+```shell
+# cd into project folder and run 'test' command since we only have single test file
+cd C:\Users\dpolzer\Me\Git\ln-scrapper
+cargo test
+#or cargo test -- --nocapture to see output
+```
