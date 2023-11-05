@@ -1,27 +1,32 @@
 use headless_chrome::Browser;
 use rand::Rng;
-use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use tokio::sync::Semaphore;
-use tokio::task::{JoinError, JoinSet};
-use tokio::time::{sleep, Duration};
 
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct Job {
+    url: String,
+    body: String,
+    salary: Option<String>,
+}
 
 #[tokio::main]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let semaphore = Arc::new(Semaphore::new(4)); // max 4 tasks
-    let contents = std::fs::read_to_string("jobs_Success_909_jobs.csv")?;
+    let jobs = Arc::new(std::sync::RwLock::new(Vec::new()));
+    let contents = std::fs::read_to_string("small_json_test.csv")?;
     let urls: Vec<&str> = contents.split(",").collect();
+    let mut handles: Vec<tokio::task::JoinHandle<()>> = vec![];
+
+    //allows Us to share the browser across multiple tasks.
     let browser = Arc::new(Mutex::new(Browser::default().unwrap()));
 
-    let mut handles:Vec<tokio::task::JoinHandle<()>> = vec![];
-    
     urls.into_iter().for_each(|url| {
         let sem_clone = Arc::clone(&semaphore);
         let browser = Arc::clone(&browser);
         let url = url.to_owned();
-        let random_delay: u64 = rand::thread_rng().gen_range(25..=80) + 200;
+        let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 200;
+        let jobs = Arc::clone(&jobs);
 
         handles.push(tokio::spawn(async move {
             let permit = sem_clone.clone().acquire_owned().await.unwrap();
@@ -34,6 +39,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("{}", &url);
                             let content = element.get_content().unwrap();
                             println!("{}", content);
+
+                            let salary: Option<String> = content
+                                .find("Salary:")
+                                .map(|index| content[index..].to_string());
+
+                            let job = Job {
+                                url: url.clone(),
+                                body: content,
+                                salary,
+                            };
+
+                            let mut jobs_write = jobs.write().unwrap();
+                            jobs_write.push(job);
                         }
                     }
                 }
@@ -48,6 +66,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Awaiting for all tasks to complete ...");
         handle.await.unwrap();
     }
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("export_jobs.json")
+        .unwrap();
+
+    let json_out = jobs.read().unwrap();
+    serde_json::to_writer(file, &*json_out)
+        .map(|_| println!("Outputed Jobs to export_jobs.json"))
+        .expect("Error writing to file");
 
     Ok(())
 }
