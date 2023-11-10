@@ -1,4 +1,4 @@
-use headless_chrome::Browser;
+use headless_chrome::{Browser, LaunchOptionsBuilder};
 use rand::Rng;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -23,69 +23,55 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let urls: Vec<&str> = contents.split(",").collect();
 
     //allows Us to share the browser across multiple tasks.
-    let browser = Arc::new(Mutex::new(Browser::default().unwrap()));
+    // let browser = Arc::new(Mutex::new(Browser::default().unwrap()));//default
+    let options = LaunchOptionsBuilder::default()
+        .headless(false)
+        .build()
+        .unwrap();
+    let browser = Arc::new(Mutex::new(Browser::new(options).unwrap()));
 
     urls.into_iter().for_each(|url| {
         let sem_clone = Arc::clone(&semaphore);
         let url = url.to_owned();
-
-        println!("----- owned url {}", url);
-
         let browser = Arc::clone(&browser);
-        let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 100;
-        let jobs = Arc::clone(&jobs);
+        let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 1000;
+        let jobs_ptr = Arc::clone(&jobs);
 
         let task = tokio::spawn(async move {
             let _permit = sem_clone.acquire().await.unwrap();
 
-            println!("URL {}\nDelay {} ms", &url, random_delay);
-
             if let Ok(page) = browser.lock().unwrap().new_tab() {
                 if let Ok(tab) = page.navigate_to(&url) {
-                    tab.wait_for_xpath_with_custom_timeout(
-                        ".show-more-less-html__markup",
-                        Duration::from_millis(250),
-                    )
-                    .map(|elm| {
-                        println!("Found element");
-                        let content = elm.get_content().unwrap();
-                        println!("{}", content);
+                    println!("URL {}\nDelay {} ms", &url, random_delay);
 
-                        let salary: Option<String> = content
-                            .find("Salary:")
-                            .map(|index| content[index..].to_string());
+                    std::thread::sleep(Duration::from_millis(random_delay));
 
-                        let job = Job {
-                            url: url.clone(),
-                            body: content,
-                            salary,
-                        };
+                    tab.find_element(".show-more-less-html__markup")
+                        .map(|elm| {
+                            println!("Found element");
+                            let content = elm.get_content().unwrap();
+                            println!("{}", content);
 
-                        let mut jobs_write = jobs.write().unwrap();
-                        jobs_write.push(job);
-                    })
-                    .expect("Failed to find element on");
-                    // 
-                    /* if we .unwrap(); here we see JoinError::Panic(Id(23), ...)
-                    
-                    thread 'tokio-runtime-worker' panicked at src\main.rs:67:22:
-                    called `Result::unwrap()` on an `Err` value: Method call error -32000: No search session with given id found
-                    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-                    thread 'Task returned an error: tokio-runtime-workerJoinError::Panic(' panicked at Idsrc\main.rs(:2143):, ...)46
-                    :
-                    called `Result::unwrap()` on an `Err` value: PoisonError { .. }
-                    thread 'Task returned an error: tokio-runtime-workerJoinError::Panic(' panicked at Idsrc\main.rs(:1743):, ...)46
-                    :
-                    called `Result::unwrap()` on an `Err` value: PoisonError { .. }
-                    Task returned an error: JoinError::Panic(Id(23), ...)
-                    Outputed Jobs to export_jobs.json
-                     */
+                            let salary: Option<String> = content
+                                .find("Salary:")
+                                .map(|index| content[index..].to_string());
+
+                            let job = Job {
+                                url: url.clone(),
+                                body: content,
+                                salary,
+                            };
+
+                            let mut jobs_write = jobs_ptr.write().unwrap();
+                            jobs_write.push(job);
+                        })
+                        .expect("Failed to find element on");
                 }
             }
-            sleep(Duration::from_millis(random_delay)).await;
         });
-
+        // does it need to be here or after the loop? Since idea is to iterate over task list. and then wait for all tasks to complete.
         tasks.spawn(task);
+
     });
 
     handle_task_results(tasks).await;

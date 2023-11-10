@@ -72,3 +72,6 @@ import fs from "fs";
   //remove loop once this works
   await browser.close();
 })();
+
+//TODO : GET ALL RUST JOBS (document.querySelector("ul.jobs-search__results-list"); works for that page too)
+//https://www.linkedin.com/jobs/search/?currentJobId=3759221931&geoId=92000000&keywords=rust&location=Worldwide&refresh=true
