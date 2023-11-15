@@ -1,10 +1,11 @@
 use headless_chrome::{Browser, LaunchOptionsBuilder};
 use rand::Rng;
+use std::collections::VecDeque;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 struct Job {
@@ -15,9 +16,7 @@ struct Job {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Create a semaphore maximum of 4 concurrent tasks
     let semaphore = Arc::new(Semaphore::new(4));
-    let mut tasks: JoinSet<Result<(), JoinError>> = JoinSet::new();
     let jobs = Arc::new(std::sync::RwLock::new(Vec::new()));
     let contents = std::fs::read_to_string("small_json_test.csv")?;
     let urls: Vec<&str> = contents.split(",").collect();
@@ -30,51 +29,61 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
     let browser = Arc::new(Mutex::new(Browser::new(options).unwrap()));
 
-    urls.into_iter().for_each(|url| {
-        let sem_clone = Arc::clone(&semaphore);
-        let url = url.to_owned();
-        let browser = Arc::clone(&browser);
-        let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 1000;
-        let jobs_ptr = Arc::clone(&jobs);
+    let url_queue = Mutex::new(VecDeque::<&str>::from(urls));
 
-        let task = tokio::spawn(async move {
-            let _permit = sem_clone.acquire().await.unwrap();
+    loop {
+        match url_queue.lock().unwrap().pop_back() {
+            Some(url) => {
+                let sem_clone = Arc::clone(&semaphore);
+                let url = url.to_owned();
+                let browser = Arc::clone(&browser);
+                //This will block until one of the permits is available.
+                let _permit = sem_clone.acquire().await.unwrap();
+                let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 200;
+                let jobs_ptr = Arc::clone(&jobs);
 
-            if let Ok(page) = browser.lock().unwrap().new_tab() {
-                if let Ok(tab) = page.navigate_to(&url) {
-                    println!("URL {}\nDelay {} ms", &url, random_delay);
+                //DO work
+                tokio::spawn(async move {
+                    if let Ok(page) = browser.lock().unwrap().new_tab() {
+                        if let Ok(tab) = page.navigate_to(&url) {
+                            println!("URL {}\nDelay {} ms", &url, random_delay);
 
-                    std::thread::sleep(Duration::from_millis(random_delay));
+                            std::thread::sleep(Duration::from_millis(random_delay));
 
-                    tab.find_element(".show-more-less-html__markup")
-                        .map(|elm| {
-                            println!("Found element");
-                            let content = elm.get_content().unwrap();
-                            println!("{}", content);
+                            tab.find_element(".show-more-less-html__markup")
+                                .map(|elm| {
+                                    println!("Found element");
+                                    let content = elm.get_content().unwrap();
+                                    println!("{}", content);
 
-                            let salary: Option<String> = content
-                                .find("Salary:")
-                                .map(|index| content[index..].to_string());
+                                    let salary: Option<String> = content
+                                        .find("Salary:")
+                                        .map(|index| content[index..].to_string());
 
-                            let job = Job {
-                                url: url.clone(),
-                                body: content,
-                                salary,
-                            };
+                                    let job = Job {
+                                        url: url.to_string(),
+                                        body: content,
+                                        salary,
+                                    };
 
-                            let mut jobs_write = jobs_ptr.write().unwrap();
-                            jobs_write.push(job);
-                        })
-                        .expect("Failed to find element on");
-                }
+                                    let mut jobs_write = jobs_ptr.write().unwrap();
+                                    jobs_write.push(job);
+                                })
+                                .unwrap_or_else(|e| {
+                                    println!("Error finding element on {}: {}", &url, e)
+                                });
+                        }
+                        let _ = page.close_target();
+                    }
+                });
+                drop(_permit);
             }
-        });
-        // does it need to be here or after the loop? Since idea is to iterate over task list. and then wait for all tasks to complete.
-        tasks.spawn(task);
-
-    });
-
-    handle_task_results(tasks).await;
+            None => {
+                println!("NO MORE ITEMS IN QUEUE: EXITING ...");
+                break;
+            }
+        }
+    }
 
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -91,7 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn handle_task_results(mut tasks: JoinSet<Result<(), JoinError>>) {
+async fn _unused_handle_task_results(mut tasks: JoinSet<Result<(), JoinError>>) {
     println!("Waiting for all tasks to complete ...\n");
     while let Some(res) = tasks.join_next().await {
         match res {
