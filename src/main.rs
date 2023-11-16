@@ -19,14 +19,19 @@ struct Job {
 async fn main() -> Result<(), Box<dyn Error>> {
     let semaphore = Arc::new(Semaphore::new(4));
     let jobs = Arc::new(std::sync::RwLock::new(Vec::new()));
-    let contents = std::fs::read_to_string("small_json_test.csv")?;
-    let urls: Vec<&str> = contents.split(",").collect();
-
-    let decoded_urls = urls
-    .into_iter()
-    .map(|u| decode(u).expect("UTF-8"))
-    .map(|f| f.split("&trackingId").collect::<Vec<&str>>()[0].trim_end_matches("=").to_owned())
-    .collect::<Vec<String>>();
+    let decoded_urls: Vec<String> =
+        std::fs::read_to_string("small_json_test.csv").map(|contents| {
+            contents
+                .split(",")
+                .into_iter()
+                .map(|u| decode(u).expect("UTF-8"))
+                .map(|f| {
+                    f.split("&trackingId").collect::<Vec<&str>>()[0]
+                        .trim_end_matches("=")
+                        .to_owned()
+                })
+                .collect::<Vec<String>>()
+        })?;
 
     //allows Us to share the browser across multiple tasks.
     // let browser = Arc::new(Mutex::new(Browser::default().unwrap()));//default
@@ -34,8 +39,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .headless(false)
         .build()
         .unwrap();
+    
     let browser = Arc::new(Mutex::new(Browser::new(options).unwrap()));
-
     let url_queue = Mutex::new(VecDeque::<String>::from(decoded_urls));
 
     loop {
