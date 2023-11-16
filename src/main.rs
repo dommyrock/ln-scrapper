@@ -3,7 +3,7 @@ use headless_chrome::{Browser, LaunchOptionsBuilder};
 use rand::Rng;
 use std::error::Error;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{RwLock, Semaphore};
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio::time::Duration;
 use urlencoding::decode;
@@ -19,6 +19,7 @@ struct Job {
 async fn main() -> Result<(), Box<dyn Error>> {
     let semaphore = Arc::new(Semaphore::new(4));
     let jobs = Arc::new(std::sync::RwLock::new(Vec::new()));
+    let retry_queue = Arc::new(RwLock::new(Vec::<String>::new()));
     let decoded_urls: Vec<String> =
         std::fs::read_to_string("small_json_test.csv").map(|contents| {
             contents
@@ -51,6 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let browser = Arc::clone(&browser);
             let random_delay: u64 = rand::thread_rng().gen_range(80..=280) + 200;
             let jobs_ptr = Arc::clone(&jobs);
+            let write_rq = Arc::clone(&retry_queue);
 
             println!(
                 "::::::> AW ----- PERMITS : {}",
@@ -85,7 +87,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 jobs_write.push(job);
                             })
                             .unwrap_or_else(|e| {
-                                println!("\nError finding element on {}\nERR: {}\n", &url, e)
+                                println!("\nError finding element on {}\nERR: {}\n", &url, e);
+
+                                tokio::spawn(async move {
+                                    write_rq.write().await.push(url);
+                                });
                             });
                     }
                     let _ = page.close_target();
@@ -108,6 +114,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     serde_json::to_writer(file, &*json_out)
         .map(|_| println!("Outputed Jobs to export_jobs.json"))
         .expect("Error writing to file");
+
+    println!("retry queue items ...");
+    retry_queue.read().await.iter().for_each(|url| {
+        println!("{}", url);
+    });
 
     Ok(())
 }
