@@ -1,10 +1,10 @@
+use futures::future::join_all;
 use headless_chrome::{Browser, LaunchOptionsBuilder};
 use rand::Rng;
-use std::collections::VecDeque;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tokio::task::{JoinError, JoinSet};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio::time::Duration;
 use urlencoding::decode;
 
@@ -39,64 +39,64 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .headless(false)
         .build()
         .unwrap();
-    
-    let browser = Arc::new(Mutex::new(Browser::new(options).unwrap()));
-    let url_queue = Mutex::new(VecDeque::<String>::from(decoded_urls));
 
-    loop {
-        match url_queue.lock().unwrap().pop_back() {
-            Some(url) => {
-                let sem_clone = Arc::clone(&semaphore);
-                let url = url.to_owned();
-                let browser = Arc::clone(&browser);
-                //This will block until one of the permits is available.
-                let _permit = sem_clone.acquire().await.unwrap();
-                let random_delay: u64 = rand::thread_rng().gen_range(50..=80) + 200;
-                let jobs_ptr = Arc::clone(&jobs);
+    let browser = Arc::new(Browser::new(options).unwrap());
+    //This will block until one of the permits is available.
+    let _permit = semaphore.acquire().await.unwrap();
 
-                //DO work
-                tokio::spawn(async move {
-                    if let Ok(page) = browser.lock().unwrap().new_tab() {
-                        if let Ok(tab) = page.navigate_to(&url) {
-                            println!("URL {}\nDelay {} ms", &url, random_delay);
+    let handles = decoded_urls
+        .into_iter()
+        .map(|url| {
+            let url = url.to_owned();
+            let browser = Arc::clone(&browser);
+            let random_delay: u64 = rand::thread_rng().gen_range(80..=280) + 200;
+            let jobs_ptr = Arc::clone(&jobs);
 
-                            std::thread::sleep(Duration::from_millis(random_delay));
+            println!(
+                "::::::> AW ----- PERMITS : {}",
+                semaphore.available_permits()
+            );
 
-                            tab.find_element(".show-more-less-html__markup")
-                                .map(|elm| {
-                                    println!("Found element");
-                                    let content = elm.get_content().unwrap();
-                                    println!("{}", content);
+            //DO work
+            tokio::spawn(async move {
+                if let Ok(page) = browser.new_tab() {
+                    if let Ok(tab) = page.navigate_to(&url) {
+                        println!("URL {}\nDelay {} ms", &url, random_delay);
 
-                                    let salary: Option<String> = content
-                                        .find("Salary:")
-                                        .map(|index| content[index..].to_string());
+                        std::thread::sleep(Duration::from_millis(random_delay));
 
-                                    let job = Job {
-                                        url: url.to_string(),
-                                        body: content,
-                                        salary,
-                                    };
+                        tab.find_element(".show-more-less-html__markup")
+                            .map(|elm| {
+                                println!("Found element");
+                                let content = elm.get_content().unwrap();
+                                println!("{}", content);
 
-                                    let mut jobs_write = jobs_ptr.write().unwrap();
-                                    jobs_write.push(job);
-                                })
-                                .unwrap_or_else(|e| {
-                                    println!("Error finding element on {}: {}", &url, e)
-                                });
-                        }
-                        let _ = page.close_target();
+                                let salary: Option<String> = content
+                                    .find("Salary:")
+                                    .map(|index| content[index..].to_string());
+
+                                let job = Job {
+                                    url: url.to_string(),
+                                    body: content,
+                                    salary,
+                                };
+
+                                let mut jobs_write = jobs_ptr.write().unwrap();
+                                jobs_write.push(job);
+                            })
+                            .unwrap_or_else(|e| {
+                                println!("\nError finding element on {}\nERR: {}\n", &url, e)
+                            });
                     }
-                });
-                drop(_permit);
-            }
-            None => {
-                println!("NO MORE ITEMS IN QUEUE: EXITING ...");
-                break;
-            }
-        }
-    }
+                    let _ = page.close_target();
+                }
+            })
+        })
+        .collect::<Vec<JoinHandle<()>>>();
 
+    join_all(handles).await;
+
+    println!("About to write JSON to file ...");
     let file = std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
