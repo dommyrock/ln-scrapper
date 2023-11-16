@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
 use tokio::time::Duration;
+use urlencoding::decode;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 struct Job {
@@ -21,6 +22,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let contents = std::fs::read_to_string("small_json_test.csv")?;
     let urls: Vec<&str> = contents.split(",").collect();
 
+    let decoded_urls = urls
+    .into_iter()
+    .map(|u| decode(u).expect("UTF-8"))
+    .map(|f| f.split("&trackingId").collect::<Vec<&str>>()[0].trim_end_matches("=").to_owned())
+    .collect::<Vec<String>>();
+
     //allows Us to share the browser across multiple tasks.
     // let browser = Arc::new(Mutex::new(Browser::default().unwrap()));//default
     let options = LaunchOptionsBuilder::default()
@@ -29,7 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
     let browser = Arc::new(Mutex::new(Browser::new(options).unwrap()));
 
-    let url_queue = Mutex::new(VecDeque::<&str>::from(urls));
+    let url_queue = Mutex::new(VecDeque::<String>::from(decoded_urls));
 
     loop {
         match url_queue.lock().unwrap().pop_back() {
